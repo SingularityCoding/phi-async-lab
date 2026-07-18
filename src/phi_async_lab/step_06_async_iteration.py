@@ -1,3 +1,4 @@
+# Step 06：用 async for 一边消费流式结果，一边让另一个 progress Task 继续推进。
 import asyncio
 from collections.abc import AsyncIterator
 
@@ -19,8 +20,12 @@ async def stream(
 
     for result in results:
         event_log.record(source.name, EventKind.WAITING, result.title)
+        # 每次 yield 前都会 await，这是一个真正的挂起点：
+        # progress Task 正是趁这个空隙才有机会运行。
         await asyncio.sleep(delay_per_result)
         event_log.record(source.name, EventKind.RESUMED, result.title)
+        # yield 把当前结果交给调用者，同时记住这里的执行位置，
+        # 下次被 __anext__ 驱动时从这里继续。
         yield result
 
     event_log.record(source.name, EventKind.COMPLETED, f"{len(results)} chunks")
@@ -34,11 +39,14 @@ async def consume(
 ) -> list[SearchResult]:
     results: list[SearchResult] = []
     try:
+        # consume() 和 stream() 属于同一条调用链，不是两个并发 Task；
+        # 真正独立的另一个 Task 是下面的 show_progress()。
         async for result in stream(source, query, event_log):
             results.append(result)
             event_log.record("consumer", EventKind.OBSERVED, result.title)
         return results
     finally:
+        # 不管正常结束还是被打断，都要通知 progress 该停下来了。
         finished.set()
 
 

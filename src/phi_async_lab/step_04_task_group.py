@@ -1,3 +1,4 @@
+# Step 04：用 TaskGroup 表达「这些子任务属于谁、作用域结束时必须都已完成或清理」。
 import asyncio
 import time
 from collections.abc import Sequence
@@ -27,6 +28,9 @@ async def collect(
     log = event_log or EventLog()
     tasks: list[asyncio.Task[list[SearchResult]]] = []
 
+    # 进入 async with 就开启了一个「子任务所有权」作用域：
+    # 正常离开这个作用域之前，TaskGroup 会等待组里所有 Task 完成；
+    # 如果有任务失败或被取消，它也会负责取消并等待其余未完成的兄弟任务。
     async with asyncio.TaskGroup() as task_group:
         for source in sources:
             task = task_group.create_task(
@@ -35,6 +39,7 @@ async def collect(
             )
             tasks.append(task)
 
+    # 走到这里，作用域已经退出，所有 Task 保证已经结束，读取 result() 是安全的。
     results = [result for task in tasks for result in task.result()]
     return results, log
 

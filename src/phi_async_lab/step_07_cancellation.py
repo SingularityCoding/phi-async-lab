@@ -1,3 +1,5 @@
+# Step 07：取消是一个请求，不是瞬间终止——必须等待被取消的 Task 完成清理，
+# 并让调用者观察到真实的终止状态。
 import asyncio
 from collections.abc import Sequence
 
@@ -17,9 +19,11 @@ async def search(source: SourceSpec, query: str, event_log: EventLog) -> list[Se
         event_log.record(source.name, EventKind.COMPLETED, f"{len(results)} results")
         return results
     except asyncio.CancelledError:
+        # 只记录，然后必须 re-raise：吞掉 CancelledError 会让调用者误以为任务正常完成。
         event_log.record(source.name, EventKind.CANCELLED)
         raise
     finally:
+        # 无论正常完成、异常还是被取消，finally 都会执行，适合在这里释放资源。
         event_log.record(source.name, EventKind.CLEANED)
 
 
@@ -32,6 +36,8 @@ async def collect_with_deadline(
     log = event_log or EventLog()
     tasks: list[asyncio.Task[list[SearchResult]]] = []
 
+    # asyncio.timeout() 到期时通过 cancellation 中断当前等待；
+    # 嵌套的 TaskGroup 会取消并等待尚未完成的子任务，退出后调用者看到 TimeoutError。
     async with asyncio.timeout(timeout_seconds):
         async with asyncio.TaskGroup() as task_group:
             for source in sources:
@@ -58,8 +64,10 @@ async def run_explicit_cancel_demo(source: SourceSpec = SOURCES[0]) -> EventLog:
     task = asyncio.create_task(search(source, QUERY, event_log), name="search-to-cancel")
 
     await asyncio.sleep(0.02)
+    # cancel() 只是发出请求，Task 要到下一个可挂起点才会真正观察到 CancelledError。
     task.cancel()
     try:
+        # 调用者必须继续 await task，才能等到 cleanup 完成并观察到真实的终止状态。
         await task
     except asyncio.CancelledError:
         event_log.record("caller", EventKind.OBSERVED, "CancelledError")

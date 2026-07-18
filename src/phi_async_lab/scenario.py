@@ -1,3 +1,5 @@
+# 所有 checkpoint 共用同一个「多源检索」场景和同一份固定数据，
+# 这样每一页文档改变的只有并发控制流本身，而不是业务逻辑。
 from dataclasses import dataclass
 
 
@@ -17,10 +19,12 @@ class ResultTemplate:
 @dataclass(frozen=True, slots=True)
 class SourceSpec:
     name: str
-    delay: float
+    delay: float  # 模拟这个数据源的响应耗时，只用于制造可观察的等待
     results: tuple[ResultTemplate, ...]
 
 
+# 三个数据源的延迟故意拉开差距（0.12 / 0.08 / 0.04 秒），
+# 这样顺序等待与并发等待的耗时差异在肉眼和测试里都足够明显。
 SOURCES = (
     SourceSpec(
         name="docs",
@@ -51,6 +55,8 @@ SOURCES = (
 
 
 def materialize(source: SourceSpec, query: str) -> list[SearchResult]:
+    # 这是一个普通同步函数：生成结果本身不涉及等待，
+    # 「等待」这件事总是由调用它的 checkpoint 代码显式表达（sleep / await sleep）。
     return [
         SearchResult(
             source=source.name,
